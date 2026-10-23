@@ -1,3 +1,11 @@
+/*
+ * Changes in the WebAssembly fork.
+ * Modified in the WebAssembly fork of Loom, https://github.com/NickOveracker/loom
+ * (branch wasm; this program: https://github.com/NickOveracker/ckt, branch wasm).
+ * Changes, with their dates:
+ *   2026-10-24  Keep generated and imported cell layouts without -p
+ * End of the changes notice.
+ */
 #include "cell.h"
 
 #include <common/timer.h>
@@ -95,24 +103,30 @@ bool import_cell(std::string path, const phy::Tech &tech, const weaver::Program 
 
 	phy::Layout macro(tech);
 	if (filesystem::exists(cellPath)) {
+		// Check the cell from the library against its netlist whether or not progress is
+		// shown (the check used to run only with -p).
 		bool imported = import_layout(macro, cellPath, spiNet.name);
-		if (progress) {
-			if (imported) {
-				macro.trace();
-				sch::Subckt gdsNet(true);
-				extract(gdsNet, macro, true);
-				gdsNet.cleanDangling(true);
-				gdsNet.combineDevices();
-				gdsNet.canonicalize();
-				searchDelay = tmr.since();
-				if (gdsNet.compare(spiNet) == 0) {
+		if (imported) {
+			macro.trace();
+			sch::Subckt gdsNet(true);
+			extract(gdsNet, macro, true);
+			gdsNet.cleanDangling(true);
+			gdsNet.combineDevices();
+			gdsNet.canonicalize();
+			searchDelay = tmr.since();
+			if (gdsNet.compare(spiNet) == 0) {
+				if (progress) {
 					printf("%sFOUND %d DBUNIT2 AREA%s]\t%gs\n", KGRN, macro.box.area(), KNRM, searchDelay);
-				} else {
-					printf("%sFAILED LVS%s, ", KRED, KNRM);
-					imported = false;
 				}
 			} else {
-				searchDelay = tmr.since();
+				if (progress) {
+					printf("%sFAILED LVS%s, ", KRED, KNRM);
+				}
+				imported = false;
+			}
+		} else {
+			searchDelay = tmr.since();
+			if (progress) {
 				printf("%sFAILED IMPORT%s, ", KRED, KNRM);
 			}
 		}
@@ -130,31 +144,39 @@ bool import_cell(std::string path, const phy::Tech &tech, const weaver::Program 
 	tmr.reset();
 
 	int result = sch::buildCell(macro, spiNet);
-	if (progress) {
-		if (result == 1) {
-			genDelay = tmr.since();
+	// Keep a generated cell that passes LVS whether or not progress is shown (it used to be
+	// kept only with -p, so lm build without -p laid out every cell and then dropped it).
+	if (result == 1) {
+		genDelay = tmr.since();
+		if (progress) {
 			printf("%sFAILED PLACEMENT%s]\t(%gs %gs)\n", KRED, KNRM, searchDelay, genDelay);
-		} else if (result == 2) {
-			genDelay = tmr.since();
+		}
+	} else if (result == 2) {
+		genDelay = tmr.since();
+		if (progress) {
 			printf("%sFAILED ROUTING%s]\t(%gs %gs)\n", KRED, KNRM, searchDelay, genDelay);
-		} else {
-			sch::Subckt gdsNet(true);
-			extract(gdsNet, macro, true);
-			gdsNet.cleanDangling(true);
-			gdsNet.combineDevices();
-			gdsNet.canonicalize();
+		}
+	} else {
+		sch::Subckt gdsNet(true);
+		extract(gdsNet, macro, true);
+		gdsNet.cleanDangling(true);
+		gdsNet.combineDevices();
+		gdsNet.canonicalize();
 
-			genDelay = tmr.since();
-			if (gdsNet.compare(spiNet) == 0) {
-				macro.properties.insert({"!wv decl", parse_ucs::export_decl(prgm, term.decl).to_string()});
+		genDelay = tmr.since();
+		if (gdsNet.compare(spiNet) == 0) {
+			macro.properties.insert({"!wv decl", parse_ucs::export_decl(prgm, term.decl).to_string()});
+			if (progress) {
 				printf("%sGENERATED %d DBUNIT2 AREA%s]\t(%gs %gs)\n", KGRN, macro.box.area(), KNRM, searchDelay, genDelay);
-				phyIdx = term.createVariant(weaver::Variant("layout", macro, spiIdx));
-			} else {
+			}
+			phyIdx = term.createVariant(weaver::Variant("layout", macro, spiIdx));
+		} else {
+			if (progress) {
 				printf("%sFAILED LVS%s]\t(%gs %gs)\n", KRED, KNRM, searchDelay, genDelay);
-				if (debug) {
-					gdsNet.print();
-					spiNet.print();
-				}
+			}
+			if (debug) {
+				gdsNet.print();
+				spiNet.print();
 			}
 		}
 	}
